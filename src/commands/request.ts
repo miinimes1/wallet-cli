@@ -675,7 +675,7 @@ async function fetchWithRedirects(
   }
 }
 
-export function redirectRequest(request: FetchPlan, status: number, location: string): FetchPlan {
+function redirectRequest(request: FetchPlan, status: number, location: string): FetchPlan {
   const nextUrl = new URL(location, request.url);
   const init = cloneRequestInit(request.init);
   const headers = new Headers(init.headers);

@@ -22,7 +22,6 @@ import {
   chargeFallbackError,
   isSessionInvalidationResponse,
   parseRequestArgs,
-  redirectRequest,
   resolvePaymentIdentity,
   runRequest,
   selectPaymentTokenResponse,
@@ -656,50 +655,31 @@ describe("request command", () => {
     expect(stdout.text()).toBe("target");
   });
 
-  it("strips credentials on cross-origin redirects", () => {
-    const redirected = redirectRequest(
-      {
-        init: {
-          headers: {
-            Authorization: "Bearer secret-token",
-            Cookie: "session=secret-cookie",
-            "Proxy-Authorization": "Basic proxy-secret",
-          },
-          method: "GET",
-        },
-        url: "https://api.example.com/redirect",
-      },
-      302,
-      "https://other.example.com/target",
-    );
-    const headers = new Headers(redirected.init.headers);
+  it("strips credentials on cross-origin redirects and keeps them on same-origin ones", async () => {
+    const seen: Record<string, string | undefined> = {};
+    const other = await testServer((request, response) => {
+      seen.cross = request.headers.authorization;
+      response.end("other");
+    });
+    const server = await testServer((request, response) => {
+      if (request.url === "/target") {
+        seen.same = request.headers.authorization;
+        response.end("target");
+        return;
+      }
+      response.statusCode = 302;
+      response.setHeader("location", request.url === "/cross" ? other.url("/target") : "/target");
+      response.end();
+    });
 
-    expect(headers.get("authorization")).toBeNull();
-    expect(headers.get("cookie")).toBeNull();
-    expect(headers.get("proxy-authorization")).toBeNull();
-  });
+    await runRequest(["-L", "--bearer", "secret-token", server.url("/cross")], {
+      stdout: captureStdout(),
+    });
+    await runRequest(["-L", "--bearer", "secret-token", server.url("/same")], {
+      stdout: captureStdout(),
+    });
 
-  it("preserves credentials on same-origin redirects", () => {
-    const redirected = redirectRequest(
-      {
-        init: {
-          headers: {
-            Authorization: "Bearer secret-token",
-            Cookie: "session=secret-cookie",
-            "Proxy-Authorization": "Basic proxy-secret",
-          },
-          method: "GET",
-        },
-        url: "https://api.example.com/redirect",
-      },
-      302,
-      "/target",
-    );
-    const headers = new Headers(redirected.init.headers);
-
-    expect(headers.get("authorization")).toBe("Bearer secret-token");
-    expect(headers.get("cookie")).toBe("session=secret-cookie");
-    expect(headers.get("proxy-authorization")).toBe("Basic proxy-secret");
+    expect(seen).toEqual({ cross: undefined, same: "Bearer secret-token" });
   });
 
   it("fails when the redirect limit is exceeded", async () => {
